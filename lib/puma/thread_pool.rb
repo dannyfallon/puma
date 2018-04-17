@@ -88,6 +88,7 @@ module Puma
           continue = true
 
           mutex.synchronize do
+            debug_log("Request thread has the mutex")
             while todo.empty?
               if @trim_requested > 0
                 @trim_requested -= 1
@@ -102,12 +103,16 @@ module Puma
               end
 
               @waiting += 1
+              debug_log("Waiting incremented, now: #{@waiting}. Signalling not_full, releasing mutex on not_empty")
               not_full.signal
               not_empty.wait mutex
+              debug_log("Request thread is awake after not_empty signal received, has the mutex")
               @waiting -= 1
+              debug_log("Waiting decremented, now: #{@waiting}")
             end
 
             work = todo.shift if continue
+            debug_log("Work taken from todo. Todo is now #{todo.size}. Releasing mutex")
           end
 
           break unless continue
@@ -139,34 +144,56 @@ module Puma
     # Add +work+ to the todo list for a Thread to pickup and process.
     def <<(work)
       @mutex.synchronize do
+        debug_log("Main process has the mutex for adding work")
         if @shutdown
           raise "Unable to add work while shutting down"
         end
 
         @todo << work
+        debug_log("Added work, todo is now #{@todo.size}")
 
         if @waiting < @todo.size and @spawned < @max
+          debug_log("Spawning thread to serve request")
           spawn_thread
         end
 
         @not_empty.signal
+        debug_log("Signalled not_empty")
       end
     end
 
     def wait_until_not_full
+      debug_log("wait_until_not_full called")
       @mutex.synchronize do
+        debug_log("Main process has the mutex for wait_until_not_full")
         while true
+          debug_log("Todo is #{@todo.size}")
+
           return if @shutdown
-          return if @waiting > 0
+
+          if @waiting > 0
+            debug_log("Waiting count is #{@waiting}, returning")
+            return
+          end
 
           # If we can still spin up new threads and there
           # is work queued, then accept more work until we would
           # spin up the max number of threads.
-          return if @todo.size < @max - @spawned
+          if @todo.size - @waiting < @max - @spawned
+            debug_log("Not full. Can spawn more threads for todo backlog, returning")
+            return
+          end
 
+          debug_log("Full, waiting")
           @not_full.wait @mutex
+          debug_log("Main process is awake after not_full signal received, has the mutex")
+
         end
       end
+    end
+
+    private def debug_log(msg)
+      STDOUT.puts("[#{Time.now.strftime("%s.%N")}, PID: #{Process.pid}, TID #{Thread.current.object_id}] #{msg}")
     end
 
     # If too many threads are in the pool, tell one to finish go ahead
