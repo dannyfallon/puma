@@ -299,7 +299,6 @@ VALUE HttpParser_alloc(VALUE klass)
   hp->fragment = fragment;
   hp->request_path = request_path;
   hp->query_string = query_string;
-  hp->http_version = http_version;
   hp->header_done = header_done;
   hp->request = Qnil;
 
